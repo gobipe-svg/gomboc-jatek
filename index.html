@@ -1,0 +1,333 @@
+<!DOCTYPE html>
+<html lang="hu">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Májgombóc Vadászat - 47-es szint!</title>
+    <style>
+        body {
+            margin: 0;
+            overflow: hidden;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            touch-action: none; /* Mobilon letiltja a görgetést */
+            
+            /* HÁTTÉR BEÁLLÍTÁSA (hatter.png) */
+            background: url('hatter.png') no-repeat center center fixed; 
+            background-size: cover;
+        }
+        /* Egy kis sötétítés a háttérre, hogy jobban látszódjon a játék */
+        body::before {
+            content: "";
+            position: absolute;
+            top: 0; left: 0; width: 100%; height: 100%;
+            background: rgba(255, 255, 230, 0.3);
+            pointer-events: none;
+        }
+
+        canvas { display: block; position: relative; z-index: 1; }
+        
+        /* UI Elemek stílusa */
+        #ui-layer {
+            position: absolute;
+            top: 10px;
+            left: 10px;
+            color: #8b4513;
+            font-weight: bold;
+            pointer-events: none;
+            z-index: 10;
+            background: rgba(255,255,255,0.7);
+            padding: 10px;
+            border-radius: 15px;
+            border: 2px solid #e87d30;
+            display: flex;
+            flex-direction: column;
+            gap: 5px;
+        }
+        .ui-item {
+            display: flex;
+            align-items: center;
+            font-size: 20px;
+        }
+        .life-icon {
+            width: 30px;
+            height: 30px;
+            margin-right: 8px;
+        }
+        
+        /* Start / Game Over / Win Képernyő */
+        #start-screen {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            text-align: center;
+            background: rgba(255, 255, 255, 0.95);
+            padding: 30px;
+            border-radius: 20px;
+            box-shadow: 0 10px 25px rgba(0,0,0,0.5);
+            border: 5px solid #e87d30;
+            z-index: 20;
+            max-width: 90%;
+        }
+        h1 { margin: 0 0 10px 0; color: #8b4513; }
+        p { font-size: 18px; color: #555; }
+        .rules img { width: 40px; vertical-align: middle; }
+        button {
+            background: #e87d30;
+            color: white;
+            border: none;
+            padding: 15px 30px;
+            font-size: 20px;
+            cursor: pointer;
+            border-radius: 10px;
+            font-weight: bold;
+            margin-top: 20px;
+            box-shadow: 0 5px #c06015;
+            transition: all 0.1s;
+        }
+        button:hover { background: #ff9955; }
+        button:active { box-shadow: 0 2px #c06015; transform: translateY(3px); }
+    </style>
+</head>
+<body>
+
+<div id="ui-layer">
+    <div class="ui-item" id="score-container">
+        <img src="elet.png" class="life-icon"> <span id="score">0</span>
+    </div>
+    <div class="ui-item" id="lives-container">
+        </div>
+</div>
+
+<div id="start-screen">
+    <h1>Májgombóc Vadászat</h1>
+    <p style="font-style: italic; color: #e87d30;">"A 47 gombóc küldetés"</p>
+    <p>Mozogj az egérrel vagy az ujjaddal!</p>
+    <div class="rules" style="text-align: left; display: inline-block; margin: 15px 0;">
+        <div><img src="majgomboc.png"> = Hamm! (+1 pont)</div>
+        <div style="margin-top: 5px;"><img src="kelbimbo.png" style="width:35px"> / <img src="erospaprika.png" style="width:35px"> = Fúj! (-1 élet)</div>
+    </div>
+    <br>
+    <button onclick="startGame()">JÁTÉK INDÍTÁSA 🎵</button>
+</div>
+
+<canvas id="gameCanvas"></canvas>
+
+<script>
+    const canvas = document.getElementById('gameCanvas');
+    const ctx = canvas.getContext('2d');
+    const startScreen = document.getElementById('start-screen');
+    const scoreEl = document.getElementById('score');
+    const livesContainer = document.getElementById('lives-container');
+
+    // ZENE BETÖLTÉSE (gomboc.mp3)
+    let bgMusic = new Audio('gomboc.mp3');
+    bgMusic.loop = true; 
+    bgMusic.volume = 0.4;
+
+    // Beállítások
+    canvas.width = window.innerWidth;
+    canvas.height = window.innerHeight;
+
+    // Játék változók
+    let gameRunning = false;
+    let score = 0;
+    let WIN_SCORE = 47; // 47 gombóc a cél!
+    let lives = 3;
+    let gameSpeed = 3.5;
+    let items = [];
+    let animationId;
+    let spawnRate = 0.025;
+    
+    let playerState = "normal";
+    let stateTimer = 0;
+
+    // Játékos
+    let player = {
+        x: canvas.width / 2,
+        y: canvas.height,
+        width: canvas.height * 0.3,
+        height: canvas.height * 0.4,
+    };
+
+    // --- KÉPEK BETÖLTÉSE (A te fájlneveiddel!) ---
+    const imgNormal = new Image(); imgNormal.src = 'arc1.png';
+    const imgHappy = new Image(); imgHappy.src = 'arc3.png';
+    const imgSick = new Image(); imgSick.src = 'arc2.png';
+    
+    const imgGomboc = new Image(); imgGomboc.src = 'majgomboc.png'; // majgomboc.png
+    const imgBad1 = new Image(); imgBad1.src = 'kelbimbo.png';      // kelbimbo.png
+    const imgBad2 = new Image(); imgBad2.src = 'erospaprika.png';   // erospaprika.png
+    
+    const imgWin = new Image(); imgWin.src = 'vege.png';            // vege.png
+
+
+    // Tárgy osztály
+    class Item {
+        constructor() {
+            this.size = Math.random() * 30 + 50; 
+            this.x = Math.random() * (canvas.width - this.size);
+            this.y = -this.size - Math.random() * 200; 
+            this.speed = Math.random() * 3 + gameSpeed;
+            this.rotation = Math.random() * Math.PI * 2;
+            this.rotSpeed = (Math.random() - 0.5) * 0.1;
+            
+            let rand = Math.random();
+            if (rand < 0.65) {
+                this.type = 'good';
+                this.img = imgGomboc;
+            } else {
+                this.type = 'bad';
+                this.img = Math.random() < 0.5 ? imgBad1 : imgBad2;
+            }
+        }
+
+        update() {
+            this.y += this.speed;
+            this.rotation += this.rotSpeed;
+        }
+
+        draw() {
+            ctx.save();
+            ctx.translate(this.x + this.size/2, this.y + this.size/2);
+            ctx.rotate(this.rotation);
+            ctx.drawImage(this.img, -this.size/2, -this.size/2, this.size, this.size);
+            ctx.restore();
+        }
+    }
+
+    // Irányítás
+    function movePlayer(clientX) {
+        player.x = clientX - player.width / 2;
+    }
+
+    window.addEventListener('mousemove', (e) => { if(gameRunning) movePlayer(e.clientX); });
+    window.addEventListener('touchmove', (e) => {
+        if(gameRunning) { e.preventDefault(); movePlayer(e.touches[0].clientX); }
+    }, { passive: false });
+
+    // Fő játék ciklus
+    function animate() {
+        if (!gameRunning) return;
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+        // Játékos rajzolása
+        let currentPlayerImg = imgNormal;
+        if (stateTimer > 0) {
+            stateTimer--;
+            if (playerState === "happy") currentPlayerImg = imgHappy;
+            if (playerState === "sick") currentPlayerImg = imgSick;
+        } else {
+            playerState = "normal";
+        }
+        // Alulra igazítás
+        player.y = canvas.height - player.height + 30; 
+        ctx.drawImage(currentPlayerImg, player.x, player.y, player.width, player.height);
+
+        // Tárgyak
+        if (Math.random() < spawnRate) items.push(new Item());
+
+        for (let i = items.length - 1; i >= 0; i--) {
+            let item = items[i];
+            item.update();
+            item.draw();
+
+            // Ütközés
+            let hitY = player.y + player.height * 0.3;
+            let hitH = player.height * 0.4;
+            let hitX = player.x + player.width * 0.2;
+            let hitW = player.width * 0.6;
+
+            if (
+                item.y + item.size > hitY &&
+                item.x + item.size > hitX &&
+                item.x < hitX + hitW &&
+                item.y < hitY + hitH
+            ) {
+                if (item.type === 'good') {
+                    // GOMBÓC (majgomboc.png)
+                    score++;
+                    scoreEl.innerText = score;
+                    playerState = "happy"; stateTimer = 30;
+                    if(score % 5 === 0) { gameSpeed += 0.4; spawnRate += 0.005; }
+
+                    // GYŐZELEM 47-NÉL
+                    if (score >= WIN_SCORE) {
+                        gameWon();
+                        return;
+                    }
+
+                } else {
+                    // ROSSZ (paprika vagy kelbimbó)
+                    lives--;
+                    updateLives();
+                    playerState = "sick"; stateTimer = 45;
+                    if (lives <= 0) { gameOver(); return; }
+                }
+                items.splice(i, 1); 
+                continue;
+            }
+            if (item.y > canvas.height) items.splice(i, 1);
+        }
+        animationId = requestAnimationFrame(animate);
+    }
+
+    function updateLives() {
+        livesContainer.innerHTML = "";
+        for(let i=0; i<lives; i++) {
+            // Élet ikon (elet.png)
+            livesContainer.innerHTML += '<img src="elet.png" class="life-icon">';
+        }
+    }
+
+    function startGame() {
+        bgMusic.play().catch(error => console.log("Zene hiba:", error));
+        startScreen.style.display = 'none';
+        gameRunning = true;
+        score = 0;
+        lives = 3;
+        gameSpeed = 3.5;
+        spawnRate = 0.025;
+        items = [];
+        scoreEl.innerText = "0";
+        updateLives();
+        animate();
+    }
+
+    function gameWon() {
+        gameRunning = false;
+        bgMusic.pause(); bgMusic.currentTime = 0;
+        cancelAnimationFrame(animationId);
+        startScreen.style.display = 'block';
+        // GYŐZTES KÉP (vege.png)
+        startScreen.innerHTML = `
+            <img src="vege.png" style="width: 100%; max-width: 450px; border-radius: 15px; border: 4px solid #e87d30; box-shadow: 0 5px 15px rgba(0,0,0,0.3); margin-bottom: 15px;">
+            <h1 style="color: #e87d30; font-size: 32px; margin: 10px 0;">EZ IGEN! ${WIN_SCORE} GOMBÓC!</h1>
+            <button onclick="location.reload()">JÁTSZOK MÉG!</button>
+        `;
+    }
+
+    function gameOver() {
+        gameRunning = false;
+        bgMusic.pause(); bgMusic.currentTime = 0;
+        cancelAnimationFrame(animationId);
+        startScreen.style.display = 'block';
+        startScreen.innerHTML = `
+            <h1 style="color: red; font-size: 36px;">Jaj, a pocak! 🤢</h1>
+            <p style="font-size: 22px;">Megettél <b>${score}</b> finom májgombócot.</p>
+            <p>De sajnos becsúszott 3 rossz falat is.</p>
+            <button onclick="startGame()">ÚJRA PRÓBÁLOM!</button>
+        `;
+    }
+
+    window.addEventListener('resize', () => {
+        canvas.width = window.innerWidth;
+        canvas.height = window.innerHeight;
+        player.width = canvas.height * 0.3;
+        player.height = canvas.height * 0.4;
+    });
+    window.dispatchEvent(new Event('resize'));
+
+</script>
+</body>
+</html>
